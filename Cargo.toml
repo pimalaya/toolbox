@@ -1,0 +1,26 @@
+[package]
+name = "pimalaya-toolboox"
+description = "Pimalaya toolbox for building applications"
+version = "0.0.1"
+authors = ["soywod <clement.douin@posteo.net>"]
+rust-version = "1.56"
+edition = "2021"
+license = "MIT"
+categories = []
+keywords = ["pimalaya", "toolbox", "cli"]
+homepage = "https://pimalaya.org"
+documentation = "https://docs.rs/pimalaya-toolbox/latest/pimalaya_toolbox"
+repository = "https://github.com/pimalaya/toolbox"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+
+[dev-dependencies]
+
+[dependencies]
+
+[patch.crates-io]
