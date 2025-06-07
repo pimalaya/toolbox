@@ -5,7 +5,7 @@
 
 let
   args' = removeAttrs args [ "pimalaya" ];
-  extraBuildInputs = "nixd,nixfmt-rfc-style,git-cliff";
+  extraBuildInputs = "nixd,nixfmt-rfc-style,openssl,dbus,git-cliff";
   shell = { inherit extraBuildInputs; };
 
 in

@@ -3,5 +3,11 @@
 
 #[cfg(feature = "build")]
 pub mod build;
+#[cfg(feature = "config")]
+pub mod config;
+#[cfg(feature = "secret")]
+pub mod secret;
+#[cfg(feature = "stream")]
+pub mod stream;
 #[cfg(feature = "terminal")]
 pub mod terminal;

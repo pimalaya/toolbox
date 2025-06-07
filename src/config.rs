@@ -120,3 +120,10 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
             .filter(|p| p.exists())
     }
 }
+
+#[macro_export]
+macro_rules! feat {
+    ($feat:literal) => {
+        format!("missing `{}` cargo feature", $feat)
+    };
+}

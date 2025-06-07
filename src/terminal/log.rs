@@ -1,6 +1,6 @@
 use std::env;
 
-use super::cli::LogFlags;
+use super::clap::args::LogFlags;
 
 pub struct Logger;
 

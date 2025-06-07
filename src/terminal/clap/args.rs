@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use super::parsers::path_parser;
+
 /// The config path flag parser.
 #[derive(Debug, Default, Parser)]
-pub struct ConfigPathsFlag {
+pub struct ConfigPathsArg {
     /// Override the default configuration file path.
     ///
     /// The given paths are shell-expanded then canonicalized (if
@@ -13,14 +15,14 @@ pub struct ConfigPathsFlag {
     /// configuration file. Other paths are merged with the first one,
     /// which allows you to separate your public config from your
     /// private(s) one(s).
-    #[arg(short, long = "config", global = true)]
+    #[arg(long = "config", short = 'c', global = true)]
     #[arg(name = "config_paths", value_name = "PATH", value_parser = path_parser)]
     pub paths: Vec<PathBuf>,
 }
 
 /// The account name flag parser.
 #[derive(Debug, Default, Parser)]
-pub struct AccountFlag {
+pub struct AccountArg {
     /// Override the default account.
     ///
     /// An account name corresponds to an entry in the table at the
@@ -70,16 +72,6 @@ pub struct LogFlags {
     #[arg(conflicts_with = "quiet")]
     #[arg(conflicts_with = "debug")]
     pub trace: bool,
-}
-
-pub fn path_parser(path: &str) -> Result<PathBuf, String> {
-    match shellexpand::full(path) {
-        Ok(path) => {
-            let path = PathBuf::from(&*path);
-            Ok(path.canonicalize().unwrap_or(path))
-        }
-        Err(err) => Err(err.to_string()),
-    }
 }
 
 #[macro_export]

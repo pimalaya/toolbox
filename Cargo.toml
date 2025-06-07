@@ -17,22 +17,39 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = []
+default = ["command", "config", "keyring", "secret", "terminal", "stream", "rustls-ring"]
+
 build = ["dep:git2", "dep:serde", "dep:toml"]
-terminal = ["dep:anyhow", "dep:clap", "dep:dirs", "dep:env_logger", "dep:serde", "dep:serde-toml-merge", "dep:serde_json", "dep:shellexpand", "dep:toml", "dep:toml_edit"]
+terminal = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:env_logger", "dep:serde", "dep:serde_json", "dep:shellexpand"]
+config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:toml"]
+secret = ["dep:secrecy"]
+keyring = ["dep:io-keyring"]
+command = ["dep:io-process"]
+stream = []
+native-tls = ["dep:native-tls"]
+rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
+rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
+
+vendored = ["native-tls?/vendored", "io-keyring?/vendored"]
 
 [dependencies]
-anyhow = { version = "1", optional = true }
+anyhow = "1"
 clap = { version = "4.4", default-features = false, features = ["std", "derive"], optional = true }
+clap_complete = { version = "4.4", optional = true }
+clap_mangen = { version = "0.2", optional = true }
 dirs = { version = "6.0", optional = true }
 env_logger = { version = "0.11", optional = true }
 git2 = { version = "0.19", optional = true, default-features = false }
+io-keyring = { version = "0.0.1", default-features = false, features = ["serde", "std"], optional = true }
+io-process = { version = "0.0.1", default-features = false, features = ["expand", "serde", "std"], optional = true }
 log = "0.4"
+native-tls = { version = "0.2", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"], optional = true }
+rustls-platform-verifier = { version = "0.5", optional = true }
+secrecy = { version = "0.10", features = ["serde"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde-toml-merge = { version = "0.3", optional = true }
 serde_json = { version = "1", optional = true }
 shellexpand = { version = "3.1", optional = true }
 toml = { version = "0.8", optional = true }
 toml_edit = { version = "0.22", optional = true }
-
-[patch.crates-io]

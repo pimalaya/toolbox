@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use super::cli::JsonFlag;
+use super::clap::args::JsonFlag;
 
 pub trait PrintTable {
     fn print(&self, writer: &mut dyn Write, table_max_width: Option<u16>) -> Result<()>;
