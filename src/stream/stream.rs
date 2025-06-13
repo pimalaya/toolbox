@@ -5,7 +5,7 @@ use std::{
     net::TcpStream,
 };
 
-use anyhow::Result;
+use http::Uri;
 #[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
 #[cfg(feature = "rustls-aws")]
@@ -17,8 +17,37 @@ use rustls::{ClientConfig, ClientConnection, StreamOwned};
 #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
 use rustls_platform_verifier::ConfigVerifierExt;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use super::de;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Invalid redirect location in HTTP response: {0}")]
+    RedirectInvalidLocationError(#[source] http::header::ToStrError, String),
+    #[error("Cannot connect to stream: Missing host in URI: {0}")]
+    ConnectStreamMissingHostError(Uri),
+    #[error("Cannot connect to stream: Cannot guess port from URI: {0}")]
+    ConnectStreamGuessPortError(Uri),
+    #[error("Cannot connect to plain stream")]
+    ConnectPlainStreamError(#[source] io::Error),
+    #[error("URI implies TLS but no TLS provider is configured: {0}")]
+    ConnectSecureStreamMissingTlsError(Uri),
+
+    #[error("I/O error")]
+    IoError(#[from] std::io::Error),
+
+    #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+    #[error("DNS error")]
+    DnsError(#[from] rustls::pki_types::InvalidDnsNameError),
+    #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+    #[error("Rustls error")]
+    RustlsError(#[from] rustls::Error),
+
+    #[cfg(feature = "native-tls")]
+    #[error("Native TLS error")]
+    NativeTlsError(#[from] native_tls::Error),
+}
 
 #[derive(Debug)]
 pub enum Stream {
@@ -30,11 +59,31 @@ pub enum Stream {
 }
 
 impl Stream {
-    pub fn connect(host: &str, port: u16, tls: &Tls) -> Result<Self> {
+    pub fn connect(uri: &Uri, tls: &Tls) -> Result<Self, Error> {
+        let Some(host) = uri.host() else {
+            return Err(Error::ConnectStreamMissingHostError(uri.clone()));
+        };
+
+        let port = match (uri.scheme(), uri.port()) {
+            (_, Some(port)) => port.as_u16(),
+            (Some(scheme), None) if scheme == "http" => 80,
+            (Some(scheme), None) if scheme == "https" => 443,
+            _ => return Err(Error::ConnectStreamGuessPortError(uri.clone())),
+        };
+
+        let secure = uri
+            .scheme()
+            .map(|s| s.as_str().ends_with(|c| c == 's' || c == 'S'))
+            .unwrap_or_default();
+
+        if !secure {
+            let tcp = TcpStream::connect((host, port))?;
+            return Ok(Stream::Plain(tcp));
+        }
+
         match tls {
-            Tls::Plain => {
-                let tcp = TcpStream::connect((host, port))?;
-                Ok(Stream::Plain(tcp))
+            Tls::None => {
+                return Err(Error::ConnectSecureStreamMissingTlsError(uri.clone()));
             }
             #[cfg(feature = "rustls-aws")]
             Tls::RustlsAws => {
@@ -59,7 +108,10 @@ impl Stream {
     }
 
     #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
-    fn connect_rustls(host: &str, port: u16) -> Result<StreamOwned<ClientConnection, TcpStream>> {
+    fn connect_rustls(
+        host: &str,
+        port: u16,
+    ) -> Result<StreamOwned<ClientConnection, TcpStream>, Error> {
         let config = Arc::new(ClientConfig::with_platform_verifier());
         let server_name = host.to_owned().try_into()?;
         let conn = ClientConnection::new(config, server_name)?;
@@ -105,7 +157,8 @@ impl Write for Stream {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(try_from = "de::Tls")]
 pub enum Tls {
-    Plain,
+    #[serde(skip_deserializing)]
+    None,
     #[cfg(feature = "native-tls")]
     NativeTls,
     #[cfg(feature = "rustls-aws")]
@@ -119,7 +172,7 @@ pub enum Tls {
 #[cfg(not(feature = "rustls-ring"))]
 impl Default for Tls {
     fn default() -> Self {
-        Self::Plain
+        Self::None
     }
 }
 

@@ -8,7 +8,6 @@ use crate::feat;
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tls {
-    Plain,
     NativeTls,
     RustlsAws,
     RustlsRing,
@@ -19,7 +18,6 @@ impl TryFrom<Tls> for super::Tls {
 
     fn try_from(tls: Tls) -> Result<Self, Self::Error> {
         match tls {
-            Tls::Plain => Ok(Self::Plain),
             #[cfg(feature = "native-tls")]
             Tls::NativeTls => Ok(Self::NativeTls),
             #[cfg(not(feature = "native-tls"))]

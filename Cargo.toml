@@ -17,15 +17,16 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["command", "config", "keyring", "secret", "terminal", "stream", "rustls-ring"]
+default = []
 
 build = ["dep:git2", "dep:serde", "dep:toml"]
 terminal = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:env_logger", "dep:serde", "dep:serde_json", "dep:shellexpand"]
+prompt = ["dep:inquire"]
 config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:toml"]
 secret = ["dep:secrecy"]
 keyring = ["dep:io-keyring"]
 command = ["dep:io-process"]
-stream = []
+stream = ["dep:http", "dep:thiserror"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
 rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
@@ -40,6 +41,8 @@ clap_mangen = { version = "0.2", optional = true }
 dirs = { version = "6.0", optional = true }
 env_logger = { version = "0.11", optional = true }
 git2 = { version = "0.19", optional = true, default-features = false }
+http = { version = "1", optional = true }
+inquire = { version = "0.7", optional = true }
 io-keyring = { version = "0.0.1", default-features = false, features = ["serde", "std"], optional = true }
 io-process = { version = "0.0.1", default-features = false, features = ["expand", "serde", "std"], optional = true }
 log = "0.4"
@@ -51,5 +54,6 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde-toml-merge = { version = "0.3", optional = true }
 serde_json = { version = "1", optional = true }
 shellexpand = { version = "3.1", optional = true }
+thiserror = { version = "2", optional = true }
 toml = { version = "0.8", optional = true }
 toml_edit = { version = "0.22", optional = true }
