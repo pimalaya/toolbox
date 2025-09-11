@@ -1,7 +1,7 @@
 #[cfg(feature = "keyring")]
-use io_keyring::Entry;
+use io_keyring::entry::KeyringEntry;
 #[cfg(feature = "command")]
-use io_process::Command;
+use io_process::command::Command;
 use secrecy::ExposeSecret;
 use serde::Serialize;
 
@@ -12,7 +12,7 @@ pub enum Secret {
     #[cfg(feature = "command")]
     Command(Command),
     #[cfg(feature = "keyring")]
-    Keyring(Entry),
+    Keyring(KeyringEntry),
 }
 
 impl Into<Secret> for super::Secret {

@@ -4,12 +4,12 @@ use secrecy::SecretString;
 use serde::Deserialize;
 
 #[cfg(feature = "keyring")]
-use io_keyring::Entry;
+use io_keyring::entry::KeyringEntry;
 #[cfg(feature = "command")]
-use io_process::Command;
+use io_process::command::Command;
 
 #[cfg(not(feature = "keyring"))]
-pub type Entry = ();
+pub type KeyringEntry = ();
 #[cfg(not(feature = "command"))]
 pub type Command = ();
 
@@ -23,7 +23,7 @@ pub enum Secret {
     #[cfg_attr(not(feature = "command"), serde(deserialize_with = "command"))]
     Command(Command),
     #[cfg_attr(not(feature = "keyring"), serde(deserialize_with = "keyring"))]
-    Keyring(Entry),
+    Keyring(KeyringEntry),
 }
 
 impl TryFrom<Secret> for super::Secret {

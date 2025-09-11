@@ -4,10 +4,18 @@ use std::process::Output;
 #[allow(unused)]
 use anyhow::{anyhow, Result};
 #[cfg(feature = "keyring")]
-use io_keyring::{coroutines::Read as ReadEntry, runtimes::std::handle as handle_keyring, Entry};
+use io_keyring::{
+    coroutines::read::{ReadSecret, ReadSecretResult},
+    entry::KeyringEntry,
+    runtimes::std::handle as handle_keyring,
+};
 #[cfg(feature = "command")]
 use io_process::{
-    coroutines::SpawnThenWaitWithOutput, runtimes::std::handle as handle_process, Command,
+    command::Command,
+    coroutines::spawn_then_wait_with_output::{
+        SpawnThenWaitWithOutput, SpawnThenWaitWithOutputResult,
+    },
+    runtimes::std::handle as handle_process,
 };
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -21,7 +29,7 @@ pub enum Secret {
     #[cfg(feature = "command")]
     Command(Command),
     #[cfg(feature = "keyring")]
-    Keyring(Entry),
+    Keyring(KeyringEntry),
 }
 
 impl Secret {
@@ -39,8 +47,12 @@ impl Secret {
                     stderr,
                 } = loop {
                     match spawn.resume(arg.take()) {
-                        Ok(output) => break output,
-                        Err(io) => arg = Some(handle_process(io)?),
+                        SpawnThenWaitWithOutputResult::Ok(output) => break output,
+                        SpawnThenWaitWithOutputResult::Io(io) => arg = Some(handle_process(io)?),
+                        SpawnThenWaitWithOutputResult::Err(err) => {
+                            let err = anyhow!("{err}");
+                            return Err(err.context("Spawn command to get secret error"));
+                        }
                     }
                 };
 
@@ -60,13 +72,17 @@ impl Secret {
             }
             #[cfg(feature = "keyring")]
             Self::Keyring(entry) => {
-                let mut spawn = ReadEntry::new(entry.clone());
+                let mut spawn = ReadSecret::new(entry.clone());
                 let mut arg = None;
 
                 loop {
                     match spawn.resume(arg.take()) {
-                        Ok(secret) => break Ok(secret),
-                        Err(io) => arg = Some(handle_keyring(io)?),
+                        ReadSecretResult::Ok(secret) => break Ok(secret),
+                        ReadSecretResult::Io(io) => arg = Some(handle_keyring(io)?),
+                        ReadSecretResult::Err(err) => {
+                            let err = anyhow!("{err}");
+                            return Err(err.context("Read keyring entry to get secret error"));
+                        }
                     }
                 }
             }
