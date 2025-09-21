@@ -46,7 +46,10 @@ pub enum Error {
 
     #[cfg(feature = "native-tls")]
     #[error("Native TLS error")]
-    NativeTlsError(#[from] native_tls::Error),
+    NativeTls(#[from] native_tls::Error),
+    #[cfg(feature = "native-tls")]
+    #[error("Native TLS handshake error")]
+    NativeTlsHandshake(#[from] native_tls::HandshakeError<TcpStream>),
 }
 
 #[derive(Debug)]
