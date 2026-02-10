@@ -26,7 +26,7 @@ config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:toml"]
 secret = ["dep:secrecy"]
 keyring = ["dep:io-keyring"]
 command = ["dep:io-process"]
-stream = ["dep:http", "dep:thiserror"]
+stream = ["dep:http", "dep:thiserror", "dep:serde"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
 rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
@@ -51,9 +51,9 @@ rustls = { version = "0.23", default-features = false, features = ["logging", "s
 rustls-platform-verifier = { version = "0.5", optional = true }
 secrecy = { version = "0.10", features = ["serde"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
-serde-toml-merge = { version = "0.3", optional = true }
+serde-toml-merge = { version = "=0.3.9", optional = true }
 serde_json = { version = "1", optional = true }
 shellexpand = { version = "3.1", optional = true }
 thiserror = { version = "2", optional = true }
-toml = { version = "0.9", optional = true }
-toml_edit = { version = "0.3", optional = true }
+toml = { version = "0.8", optional = true }
+toml_edit = { version = "0.24", optional = true }
