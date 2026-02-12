@@ -25,11 +25,11 @@ impl TryFrom<Tls> for super::Tls {
             #[cfg(feature = "rustls-aws")]
             Tls::RustlsAws => Ok(Self::RustlsAws),
             #[cfg(not(feature = "rustls-aws"))]
-            Tls::RustlsAws => bail!(feat!("native-tls")),
+            Tls::RustlsAws => bail!(feat!("rustls-aws")),
             #[cfg(feature = "rustls-ring")]
             Tls::RustlsRing => Ok(Self::RustlsRing),
             #[cfg(not(feature = "rustls-ring"))]
-            Tls::RustlsRing => bail!(feat!("native-tls")),
+            Tls::RustlsRing => bail!(feat!("rustls-ring")),
         }
     }
 }
