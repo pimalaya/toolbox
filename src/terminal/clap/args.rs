@@ -22,7 +22,7 @@ pub struct ConfigPathsArg {
 
 /// The account name flag parser.
 #[derive(Debug, Default, Parser)]
-pub struct AccountArg {
+pub struct AccountFlag {
     /// Override the default account.
     ///
     /// An account name corresponds to an entry in the table at the
@@ -30,6 +30,17 @@ pub struct AccountArg {
     #[arg(long = "account", short = 'a', global = true)]
     #[arg(name = "account_name", value_name = "NAME")]
     pub name: Option<String>,
+}
+
+/// The account name flag parser.
+#[derive(Debug, Default, Parser)]
+pub struct AccountArg {
+    /// Override the default account.
+    ///
+    /// An account name corresponds to an entry in the table at the
+    /// root level of your TOML configuration file.
+    #[arg(name = "account_name", value_name = "ACCOUNT")]
+    pub name: String,
 }
 
 /// The JSON output flag parser.
