@@ -17,14 +17,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = []
-
 build = ["dep:git2", "dep:serde", "dep:toml"]
 terminal = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:env_logger", "dep:serde", "dep:serde_json", "dep:shellexpand"]
 config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:toml"]
 secret = ["dep:secrecy", "dep:io-process", "dep:serde", "dep:thiserror"]
 sasl = ["dep:secrecy"]
-stream = []
+stream = ["dep:uds_windows"]
 imap = ["dep:io-imap", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
 smtp = ["dep:gethostname", "dep:io-smtp", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
 native-tls = ["dep:native-tls"]
@@ -63,7 +61,7 @@ url = { version = "2.2", optional = true }
 gethostname = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-uds_windows = "1"
+uds_windows = { version = "1", optional = true }
 
 [patch.crates-io]
 io-imap.path = "../imap"
