@@ -5,6 +5,8 @@
 pub mod build;
 #[cfg(feature = "config")]
 pub mod config;
+#[cfg(feature = "sasl")]
+pub mod sasl;
 #[cfg(feature = "secret")]
 pub mod secret;
 #[cfg(feature = "stream")]
