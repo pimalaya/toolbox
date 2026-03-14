@@ -17,9 +17,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+default = []
 build = ["dep:git2", "dep:serde", "dep:toml"]
 terminal = ["dep:clap", "dep:clap_complete", "dep:clap_mangen", "dep:env_logger", "dep:serde", "dep:serde_json", "dep:shellexpand"]
-config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:toml"]
+config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "dep:toml"]
 secret = ["dep:secrecy", "dep:io-process", "dep:serde", "dep:thiserror"]
 sasl = ["dep:secrecy"]
 stream = ["dep:uds_windows"]

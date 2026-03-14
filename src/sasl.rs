@@ -15,6 +15,10 @@ pub enum SaslMechanism {
     Anonymous,
 }
 
+pub fn sasl_default_mechanisms() -> Vec<SaslMechanism> {
+    vec![SaslMechanism::Plain, SaslMechanism::Login]
+}
+
 #[derive(Clone, Debug)]
 pub struct SaslLogin {
     pub username: String,

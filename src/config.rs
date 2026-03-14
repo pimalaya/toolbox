@@ -1,9 +1,9 @@
-use std::{fs, path::PathBuf};
+use std::{fmt, fs, path::PathBuf};
 
 use anyhow::{bail, Context, Result};
 use dirs::{config_dir, home_dir};
 use log::debug;
-use serde::Deserialize;
+use serde::{de::Visitor, Deserialize, Deserializer};
 use serde_toml_merge::merge;
 use toml::Value;
 
@@ -121,9 +121,25 @@ pub trait TomlConfig: for<'de> Deserialize<'de> {
     }
 }
 
-#[macro_export]
-macro_rules! feat {
-    ($feat:literal) => {
-        format!("missing `{}` cargo feature", $feat)
-    };
+struct ShellExpandedStringVisitor;
+
+impl<'de> Visitor<'de> for ShellExpandedStringVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an string containing environment variable(s)")
+    }
+
+    fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+        match shellexpand::full(&v) {
+            Ok(v) => Ok(v.to_string()),
+            Err(_) => Ok(v),
+        }
+    }
+}
+
+pub fn shell_expanded_string<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    deserializer.deserialize_string(ShellExpandedStringVisitor)
 }
