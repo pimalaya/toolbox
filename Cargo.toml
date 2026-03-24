@@ -25,6 +25,7 @@ secret = ["dep:secrecy", "dep:io-process", "dep:serde", "dep:thiserror"]
 sasl = ["dep:secrecy"]
 stream = ["dep:uds_windows"]
 imap = ["dep:io-imap", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
+jmap = ["dep:base64", "dep:io-jmap", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
 smtp = ["dep:gethostname", "dep:io-smtp", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
@@ -34,17 +35,20 @@ vendored = ["native-tls?/vendored"]
 
 [dependencies]
 anyhow = "1"
+base64 = { version = "0.22", optional = true }
 clap = { version = "4.4", default-features = false, features = ["std", "derive"], optional = true }
 clap_complete = { version = "4.4", optional = true }
 clap_mangen = { version = "0.2", optional = true }
 dirs = { version = "6.0", optional = true }
 env_logger = { version = "0.11", optional = true }
+gethostname = { version = "1", optional = true }
 git2 = { version = "0.20", optional = true, default-features = false }
 http = { version = "1", optional = true }
 inquire = { version = "0.7", optional = true }
 io-imap = { version = "0.0.1", default-features = false, optional = true }
-io-smtp = { version = "0.0.1", default-features = false, features = ["ext_auth", "starttls"], optional = true }
+io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-process = { version = "0.0.2", default-features = false, features = ["expand", "serde", "std"], optional = true }
+io-smtp = { version = "0.0.1", default-features = false, features = ["ext_auth", "starttls"], optional = true }
 io-stream = { version = "0.0.2", default-features = false, features = ["std"], optional = true }
 log = "0.4"
 native-tls = { version = "0.2", optional = true }
@@ -59,12 +63,13 @@ thiserror = { version = "2", optional = true }
 toml = { version = "0.8", optional = true }
 toml_edit = { version = "0.24", optional = true }
 url = { version = "2.2", optional = true }
-gethostname = { version = "1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 uds_windows = { version = "1", optional = true }
 
 [patch.crates-io]
-io-imap.path = "../imap"
-io-smtp.path = "../smtp"
-smtp-codec.path = "../smtp-codec/smtp-codec"
+io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
+io-jmap.git = "https://github.com/pimalaya/io-jmap"
+io-http.git = "https://github.com/pimalaya/io-http"
+io-smtp.git = "https://github.com/pimalaya/io-smtp"
+smtp-codec.git = "https://github.com/pimalaya/smtp-codec"
