@@ -90,56 +90,81 @@ fn new_stream(host: impl ToString, tcp: TcpStream, tls: &Tls) -> Result<Stream> 
 }
 
 impl JmapSession {
+    /// Returns a new TLS stream to `url` if its authority differs from the
+    /// current JMAP API URL, or `None` if the existing stream can be reused.
+    pub fn connect_if_different(&self, url: &url::Url, tls: &Tls) -> Result<Option<Stream>> {
+        let api_url = self.context.api_url();
+
+        let same_host = api_url.map(|a| a.host() == url.host()).unwrap_or(false);
+        let same_port = api_url.map(|a| a.port_or_known_default() == url.port_or_known_default()).unwrap_or(false);
+
+        if same_host && same_port {
+            return Ok(None);
+        }
+
+        let host = url.host_str().unwrap_or("localhost");
+        let port = url.port_or_known_default().unwrap_or(443);
+        let tcp = std::net::TcpStream::connect((host, port))?;
+        Ok(Some(new_stream(host, tcp, tls)?))
+    }
+
     /// Establishes a JMAP session.
     ///
-    /// Connects to `url.host():443` (or the port in the URL), performs
-    /// TLS handshake, and runs `GET /.well-known/jmap` to discover the
-    /// server's session object. The session's `api_url` and
-    /// `primary_accounts` are stored in the returned context.
+    /// `server` accepts either a bare authority (`fastmail.com`,
+    /// `mail.example.com:8080`) or a full URL (`https://api.fastmail.com/jmap/api/`).
+    /// A bare authority triggers `/.well-known/jmap` discovery; a full URL is
+    /// used as the direct session endpoint.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The URL scheme is not `https` or `jmap`
-    /// - TLS connection fails
-    /// - Session discovery fails (network error or bad response)
-    pub fn new(url: Url, tls: Tls, auth: JmapAuth) -> Result<Self> {
-        info!("connecting to JMAP server using {url}");
+    /// Supported schemes: `https`, `jmaps` (TLS); `http`, `jmap` (plain).
+    pub fn new(server: String, tls: Tls, auth: JmapAuth) -> Result<Self> {
+        let url = match Url::parse(&server) {
+            Ok(url) => url,
+            Err(url::ParseError::RelativeUrlWithoutBase) => {
+                // Bare authority — prepend https:// for discovery.
+                Url::parse(&format!("https://{server}"))?
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        info!("connecting to JMAP server {url}");
 
         let host = url.host_str().unwrap_or("localhost");
 
-        match url.scheme() {
-            scheme
-                if scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("jmap") =>
-            {
-                let port = url.port().unwrap_or(443);
-                let tcp = TcpStream::connect((host, port))?;
-
-                let mut stream = new_stream(host, tcp, &tls)?;
-
-                let context = JmapContext::with_http_auth(auth);
-                let mut coroutine = GetJmapSession::new(context, &url)?;
-                let mut arg = None;
-
-                let context = loop {
-                    match coroutine.resume(arg.take()) {
-                        GetJmapSessionResult::Io(io) => arg = Some(handle(&mut stream, io)?),
-                        GetJmapSessionResult::Ok { context, .. } => break context,
-                        GetJmapSessionResult::Reset(uri) => {
-                            let host = uri.host().unwrap_or(host);
-                            let port = uri.port_u16().unwrap_or(443);
-                            let tcp = TcpStream::connect((host, port))?;
-                            stream = new_stream(host, tcp, &tls)?;
-                        }
-                        GetJmapSessionResult::Err(err) => return Err(err.into()),
-                    }
-                };
-
-                Ok(Self { context, stream })
+        let (port, use_tls) = match url.scheme() {
+            s if s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("jmaps") => {
+                (url.port().unwrap_or(443), true)
             }
-            scheme => {
-                bail!("Unknown JMAP scheme `{scheme}`, expected `https` or `jmap`")
+            s if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("jmap") => {
+                (url.port().unwrap_or(80), false)
             }
-        }
+            scheme => bail!("unsupported JMAP scheme `{scheme}`, expected http/https/jmap/jmaps"),
+        };
+
+        let tcp = TcpStream::connect((host, port))?;
+        let mut stream = if use_tls {
+            new_stream(host, tcp, &tls)?
+        } else {
+            Stream::Tcp(tcp)
+        };
+
+        let context = JmapContext::with_http_auth(auth);
+        let mut coroutine = GetJmapSession::new(context, &url)?;
+        let mut arg = None;
+
+        let context = loop {
+            match coroutine.resume(arg.take()) {
+                GetJmapSessionResult::Io(io) => arg = Some(handle(&mut stream, io)?),
+                GetJmapSessionResult::Ok { context, .. } => break context,
+                GetJmapSessionResult::Reset(uri) => {
+                    let host = uri.host().unwrap_or(host);
+                    let port = uri.port_u16().unwrap_or(443);
+                    let tcp = TcpStream::connect((host, port))?;
+                    stream = new_stream(host, tcp, &tls)?;
+                }
+                GetJmapSessionResult::Err(err) => return Err(err.into()),
+            }
+        };
+
+        Ok(Self { context, stream })
     }
 }
