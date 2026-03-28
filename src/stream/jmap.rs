@@ -2,9 +2,9 @@ use std::{net::TcpStream, sync::Arc};
 
 use anyhow::{bail, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
-use io_jmap::{
-    context::JmapContext,
-    coroutines::get_session::{GetJmapSession, GetJmapSessionResult},
+use io_jmap::rfc8620::{
+    coroutines::session_get::{JmapSessionGet, JmapSessionGetResult},
+    types::session::JmapSession as IoJmapSession,
 };
 use io_stream::runtimes::std::handle;
 use log::info;
@@ -49,14 +49,15 @@ impl From<JmapAuth> for SecretString {
 /// A live JMAP session over a TLS connection.
 ///
 /// Created by [`JmapSession::new`]. Holds the discovered session
-/// context and the open TLS stream to the JMAP server.
+/// and the open TLS stream to the JMAP server.
 ///
 /// JMAP always requires TLS — plain HTTP connections are not
 /// supported by this session type.
 #[derive(Debug)]
 pub struct JmapSession {
-    pub context: JmapContext,
+    pub session: IoJmapSession,
     pub stream: Stream,
+    pub http_auth: SecretString,
 }
 
 fn new_stream(host: impl ToString, tcp: TcpStream, tls: &Tls) -> Result<Stream> {
@@ -93,10 +94,10 @@ impl JmapSession {
     /// Returns a new TLS stream to `url` if its authority differs from the
     /// current JMAP API URL, or `None` if the existing stream can be reused.
     pub fn connect_if_different(&self, url: &url::Url, tls: &Tls) -> Result<Option<Stream>> {
-        let api_url = self.context.api_url();
+        let api_url = &self.session.api_url;
 
-        let same_host = api_url.map(|a| a.host() == url.host()).unwrap_or(false);
-        let same_port = api_url.map(|a| a.port_or_known_default() == url.port_or_known_default()).unwrap_or(false);
+        let same_host = api_url.host() == url.host();
+        let same_port = api_url.port_or_known_default() == url.port_or_known_default();
 
         if same_host && same_port {
             return Ok(None);
@@ -147,24 +148,28 @@ impl JmapSession {
             Stream::Tcp(tcp)
         };
 
-        let context = JmapContext::with_http_auth(auth);
-        let mut coroutine = GetJmapSession::new(context, &url)?;
+        let http_auth: SecretString = auth.into();
+        let mut coroutine = JmapSessionGet::new(&http_auth, &url)?;
         let mut arg = None;
 
-        let context = loop {
+        let session = loop {
             match coroutine.resume(arg.take()) {
-                GetJmapSessionResult::Io(io) => arg = Some(handle(&mut stream, io)?),
-                GetJmapSessionResult::Ok { context, .. } => break context,
-                GetJmapSessionResult::Reset(uri) => {
+                JmapSessionGetResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                JmapSessionGetResult::Ok { session, .. } => break session,
+                JmapSessionGetResult::Reset(uri) => {
                     let host = uri.host().unwrap_or(host);
                     let port = uri.port_u16().unwrap_or(443);
                     let tcp = TcpStream::connect((host, port))?;
                     stream = new_stream(host, tcp, &tls)?;
                 }
-                GetJmapSessionResult::Err(err) => return Err(err.into()),
+                JmapSessionGetResult::Err { err } => return Err(err.into()),
             }
         };
 
-        Ok(Self { context, stream })
+        Ok(Self {
+            session,
+            stream,
+            http_auth,
+        })
     }
 }
