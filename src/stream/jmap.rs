@@ -21,6 +21,7 @@ use crate::stream::{Stream, Tls, TlsProvider};
 // https://www.iana.org/assignments/http-authschemes/http-authschemes.xhtml#authschemes
 #[derive(Clone, Debug)]
 pub enum JmapAuth {
+    Header(SecretString),
     /// Bearer token (OAuth 2.0).
     Bearer(SecretString),
     /// HTTP Basic authentication.
@@ -33,6 +34,7 @@ pub enum JmapAuth {
 impl From<JmapAuth> for SecretString {
     fn from(auth: JmapAuth) -> SecretString {
         match auth {
+            JmapAuth::Header(auth) => auth,
             JmapAuth::Bearer(token) => {
                 let token = token.expose_secret();
                 format!("Bearer {token}").into()
