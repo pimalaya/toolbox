@@ -48,7 +48,7 @@ inquire = { version = "0.7", optional = true }
 io-imap = { version = "0.0.1", default-features = false, optional = true }
 io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-process = { version = "0.0.2", default-features = false, features = ["expand", "serde", "std"], optional = true }
-io-smtp = { version = "0.0.1", default-features = false, features = ["ext_auth", "starttls"], optional = true }
+io-smtp = { version = "0.0.1", default-features = false, optional = true }
 io-stream = { version = "0.0.2", default-features = false, features = ["std"], optional = true }
 log = "0.4"
 native-tls = { version = "0.2", optional = true }
@@ -72,4 +72,3 @@ io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
 io-jmap.git = "https://github.com/pimalaya/io-jmap"
 io-http.git = "https://github.com/pimalaya/io-http"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
-smtp-codec.git = "https://github.com/pimalaya/smtp-codec"
