@@ -1,19 +1,24 @@
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::{borrow::Cow, net::TcpStream, sync::Arc};
+use std::{
+    borrow::Cow,
+    net::{Ipv4Addr, TcpStream},
+    sync::Arc,
+};
 
 use anyhow::{bail, Result};
 use io_smtp::{
+    login::*,
     rfc3207::starttls::*,
-    rfc4954::{authenticate::*, types::auth_mechanism::AuthMechanism},
+    rfc4616::plain::*,
     rfc5321::{
         ehlo::*,
         greeting::*,
-        types::{domain::Domain, ehlo_domain::EhloDomain, ehlo_response::Capability},
+        types::{domain::Domain, ehlo_domain::EhloDomain},
     },
 };
-use io_stream::runtimes::std::handle;
-use log::{debug, info};
+use io_socket::runtimes::std_stream::handle;
+use log::info;
 #[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
 #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
@@ -39,7 +44,7 @@ impl SmtpSession {
         let host = url.host_str().unwrap_or("127.0.0.1");
         let domain = EhloDomain::Domain(Domain(Cow::Borrowed("127.0.0.1")));
 
-        let (capabilities, mut stream) = match url.scheme() {
+        let (_capabilities, mut stream) = match url.scheme() {
             scheme if scheme.eq_ignore_ascii_case("smtp") => {
                 let port = url.port().unwrap_or(25);
                 let mut stream = TcpStream::connect((host, port))?;
@@ -48,7 +53,9 @@ impl SmtpSession {
                 let mut arg = None;
                 loop {
                     match coroutine.resume(arg.take()) {
-                        GetSmtpGreetingResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                        GetSmtpGreetingResult::Io { input } => {
+                            arg = Some(handle(&mut stream, input)?)
+                        }
                         GetSmtpGreetingResult::Ok { .. } => break,
                         GetSmtpGreetingResult::Err { err } => Err(err)?,
                     }
@@ -58,7 +65,7 @@ impl SmtpSession {
                 let mut arg = None;
                 let capabilities = loop {
                     match coroutine.resume(arg.take()) {
-                        SmtpEhloResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                        SmtpEhloResult::Io { input } => arg = Some(handle(&mut stream, input)?),
                         SmtpEhloResult::Ok { capabilities } => break capabilities,
                         SmtpEhloResult::Err { err } => Err(err)?,
                     }
@@ -77,7 +84,9 @@ impl SmtpSession {
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            SmtpStartTlsResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                            SmtpStartTlsResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
+                            }
                             SmtpStartTlsResult::Ok => break,
                             SmtpStartTlsResult::Err { err } => Err(err)?,
                         }
@@ -117,7 +126,7 @@ impl SmtpSession {
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            SmtpEhloResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                            SmtpEhloResult::Io { input } => arg = Some(handle(&mut stream, input)?),
                             SmtpEhloResult::Ok { capabilities } => break capabilities,
                             SmtpEhloResult::Err { err } => Err(err)?,
                         }
@@ -127,8 +136,8 @@ impl SmtpSession {
                     let mut arg = None;
                     loop {
                         match coroutine.resume(arg.take()) {
-                            GetSmtpGreetingResult::Io { io } => {
-                                arg = Some(handle(&mut stream, io)?)
+                            GetSmtpGreetingResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
                             }
                             GetSmtpGreetingResult::Ok { .. } => break,
                             GetSmtpGreetingResult::Err { err } => Err(err)?,
@@ -140,7 +149,7 @@ impl SmtpSession {
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            SmtpEhloResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                            SmtpEhloResult::Io { input } => arg = Some(handle(&mut stream, input)?),
                             SmtpEhloResult::Ok { capabilities } => break capabilities,
                             SmtpEhloResult::Err { err } => Err(err)?,
                         }
@@ -157,7 +166,9 @@ impl SmtpSession {
                 let mut arg = None;
                 loop {
                     match coroutine.resume(arg.take()) {
-                        GetSmtpGreetingResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                        GetSmtpGreetingResult::Io { input } => {
+                            arg = Some(handle(&mut stream, input)?)
+                        }
                         GetSmtpGreetingResult::Ok { .. } => break,
                         GetSmtpGreetingResult::Err { err } => Err(err)?,
                     }
@@ -167,7 +178,7 @@ impl SmtpSession {
                 let mut arg = None;
                 let capabilities = loop {
                     match coroutine.resume(arg.take()) {
-                        SmtpEhloResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                        SmtpEhloResult::Io { input } => arg = Some(handle(&mut stream, input)?),
                         SmtpEhloResult::Ok { capabilities } => break capabilities,
                         SmtpEhloResult::Err { err } => Err(err)?,
                     }
@@ -180,86 +191,55 @@ impl SmtpSession {
             }
         };
 
-        let mut candidates = vec![];
+        let mechanism = sasl
+            .mechanism
+            .or(Some(SaslMechanism::Plain).filter(|_| sasl.plain.is_some()))
+            .or(Some(SaslMechanism::Login).filter(|_| sasl.login.is_some()));
 
-        for mechanism in sasl.mechanisms {
-            match mechanism {
-                SaslMechanism::Login => {
-                    let Some(auth) = sasl.login.take() else {
-                        debug!("missing SASL LOGIN configuration, skipping it");
-                        continue;
-                    };
+        match mechanism {
+            None => bail!("no SASL mechanism configured"),
+            Some(SaslMechanism::Login) => {
+                let Some(auth) = sasl.login.take() else {
+                    bail!("missing SASL LOGIN configuration");
+                };
 
-                    for capability in &capabilities {
-                        match capability {
-                            Capability::Auth(mechanisms) => {
-                                for m in mechanisms {
-                                    match m {
-                                        AuthMechanism::Login => {
-                                            candidates.push(SmtpAuthenticateCandidate::Login {
-                                                login: auth.username.clone(),
-                                                password: auth.password.clone(),
-                                                domain: domain.clone(),
-                                            });
-                                            break;
-                                        }
-                                        _ => continue,
-                                    }
-                                }
-                            }
-                            _ => continue,
-                        }
+                let mut arg = None;
+                let mut coroutine = SmtpLogin::new(
+                    &auth.username,
+                    &auth.password,
+                    Ipv4Addr::new(127, 0, 0, 1).into(),
+                );
+
+                loop {
+                    match coroutine.resume(arg.take()) {
+                        SmtpLoginResult::Io { input } => arg = Some(handle(&mut stream, input)?),
+                        SmtpLoginResult::Ok => break,
+                        SmtpLoginResult::Err { err } => bail!(err),
                     }
-
-                    debug!("SASL LOGIN disabled by the server, skipping it");
-                    continue;
                 }
-                SaslMechanism::Plain => {
-                    let Some(auth) = sasl.plain.take() else {
-                        debug!("missing SASL PLAIN configuration, skipping it");
-                        continue;
-                    };
+            }
+            Some(SaslMechanism::Plain) => {
+                let Some(auth) = sasl.plain.take() else {
+                    bail!("missing SASL PLAIN configuration");
+                };
 
-                    for capability in &capabilities {
-                        match capability {
-                            Capability::Auth(mechanisms) => {
-                                for m in mechanisms {
-                                    match m {
-                                        AuthMechanism::Plain => {
-                                            candidates.push(SmtpAuthenticateCandidate::Plain {
-                                                login: auth.authcid.clone(),
-                                                password: auth.passwd.clone(),
-                                                domain: domain.clone(),
-                                            });
-                                            break;
-                                        }
-                                        _ => continue,
-                                    }
-                                }
-                            }
-                            _ => continue,
-                        }
+                let mut arg = None;
+                let mut coroutine = SmtpPlain::new(
+                    &auth.authcid,
+                    &auth.passwd,
+                    Ipv4Addr::new(127, 0, 0, 1).into(),
+                );
+
+                loop {
+                    match coroutine.resume(arg.take()) {
+                        SmtpPlainResult::Io { input } => arg = Some(handle(&mut stream, input)?),
+                        SmtpPlainResult::Ok => break,
+                        SmtpPlainResult::Err { err } => bail!(err),
                     }
-
-                    debug!("SASL PLAIN disabled by the server, skipping it");
-                    continue;
                 }
-                SaslMechanism::Anonymous => {
-                    unimplemented!("ANONYMOUS SASL mechanism not yet implemented")
-                }
-            };
-        }
-
-        if !candidates.is_empty() {
-            let mut arg = None;
-            let mut coroutine = SmtpAuthenticate::new(candidates);
-
-            loop {
-                match coroutine.resume(arg.take()) {
-                    SmtpAuthenticateResult::Io { io } => arg = Some(handle(&mut stream, io)?),
-                    SmtpAuthenticateResult::Ok => break,
-                    SmtpAuthenticateResult::Err { err } => bail!(err),
-                }
+            }
+            Some(SaslMechanism::Anonymous) => {
+                unimplemented!("ANONYMOUS SASL mechanism not yet implemented")
             }
         }
 

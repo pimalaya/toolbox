@@ -5,15 +5,12 @@ use std::{net::TcpStream, sync::Arc};
 use anyhow::{bail, Result};
 use io_imap::{
     context::ImapContext,
-    coroutines::{
-        authenticate::*, authenticate_anonymous::ImapAuthenticateAnonymousParams,
-        authenticate_plain::ImapAuthenticatePlainParams, capability::*,
-        greeting_with_capability::*, login::ImapLoginParams, starttls::*,
-    },
-    types::{auth::AuthMechanism, response::Capability},
+    rfc3501::{capability::*, greeting_with_capability::*, login::*, starttls::*},
+    sasl::authenticate_plain::*,
+    types::response::Capability,
 };
-use io_stream::runtimes::std::handle;
-use log::{debug, info};
+use io_socket::runtimes::std_stream::handle;
+use log::info;
 #[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
 #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
@@ -45,18 +42,18 @@ impl ImapSession {
                 let port = url.port().unwrap_or(143);
                 let mut stream = TcpStream::connect((host, port))?;
 
-                let mut coroutine = GetImapGreetingWithCapability::new(context);
+                let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
                 let mut arg = None;
 
                 loop {
                     match coroutine.resume(arg.take()) {
-                        GetImapGreetingWithCapabilityResult::Io { io } => {
-                            arg = Some(handle(&mut stream, io)?)
+                        ImapGreetingWithCapabilityGetResult::Io { input } => {
+                            arg = Some(handle(&mut stream, input)?)
                         }
-                        GetImapGreetingWithCapabilityResult::Ok { context: c } => {
+                        ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
                             break context = c
                         }
-                        GetImapGreetingWithCapabilityResult::Err { err, .. } => Err(err)?,
+                        ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
                     }
                 }
 
@@ -72,7 +69,9 @@ impl ImapSession {
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            ImapStartTlsResult::Io { io } => arg = Some(handle(&mut stream, io)?),
+                            ImapStartTlsResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
+                            }
                             ImapStartTlsResult::Ok { context: c } => break context = c,
                             ImapStartTlsResult::Err { err, .. } => Err(err)?,
                         }
@@ -107,31 +106,31 @@ impl ImapSession {
                 };
 
                 if starttls {
-                    let mut coroutine = GetImapCapability::new(context);
+                    let mut coroutine = ImapCapabilityGet::new(context);
                     let mut arg = None;
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            GetImapCapabilityResult::Io { io } => {
-                                arg = Some(handle(&mut stream, io)?)
+                            ImapCapabilityGetResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
                             }
-                            GetImapCapabilityResult::Ok { context: c } => break context = c,
-                            GetImapCapabilityResult::Err { err, .. } => Err(err)?,
+                            ImapCapabilityGetResult::Ok { context: c } => break context = c,
+                            ImapCapabilityGetResult::Err { err, .. } => Err(err)?,
                         }
                     }
                 } else {
-                    let mut coroutine = GetImapGreetingWithCapability::new(context);
+                    let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
                     let mut arg = None;
 
                     loop {
                         match coroutine.resume(arg.take()) {
-                            GetImapGreetingWithCapabilityResult::Io { io } => {
-                                arg = Some(handle(&mut stream, io)?)
+                            ImapGreetingWithCapabilityGetResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
                             }
-                            GetImapGreetingWithCapabilityResult::Ok { context: c } => {
+                            ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
                                 break context = c
                             }
-                            GetImapGreetingWithCapabilityResult::Err { err, .. } => Err(err)?,
+                            ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
                         }
                     }
                 }
@@ -142,18 +141,18 @@ impl ImapSession {
                 let sock_path = url.path();
                 let mut stream = UnixStream::connect(&sock_path)?;
 
-                let mut coroutine = GetImapGreetingWithCapability::new(context);
+                let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
                 let mut arg = None;
 
                 loop {
                     match coroutine.resume(arg.take()) {
-                        GetImapGreetingWithCapabilityResult::Io { io } => {
-                            arg = Some(handle(&mut stream, io)?)
+                        ImapGreetingWithCapabilityGetResult::Io { input } => {
+                            arg = Some(handle(&mut stream, input)?)
                         }
-                        GetImapGreetingWithCapabilityResult::Ok { context: c } => {
+                        ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
                             break context = c
                         }
-                        GetImapGreetingWithCapabilityResult::Err { err, .. } => Err(err)?,
+                        ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
                     }
                 }
 
@@ -165,79 +164,64 @@ impl ImapSession {
         };
 
         if !context.authenticated {
-            let mut candidates = vec![];
-
             let ir = context.capability.contains(&Capability::SaslIr);
 
-            for mechanism in sasl.mechanisms {
-                match mechanism {
-                    SaslMechanism::Login => {
-                        let Some(auth) = sasl.login.take() else {
-                            debug!("missing SASL LOGIN configuration, skipping it");
-                            continue;
-                        };
+            let mechanism = sasl
+                .mechanism
+                .or(Some(SaslMechanism::Plain).filter(|_| sasl.plain.is_some()))
+                .or(Some(SaslMechanism::Login).filter(|_| sasl.login.is_some()));
 
-                        if context.capability.contains(&Capability::LoginDisabled) {
-                            debug!("SASL LOGIN disabled by the server, skipping it");
-                            continue;
+            match mechanism {
+                None => bail!("no SASL mechanism configured"),
+                Some(SaslMechanism::Login) => {
+                    let Some(auth) = sasl.login.take() else {
+                        bail!("missing SASL LOGIN configuration");
+                    };
+
+                    let mut arg = None;
+                    let mut coroutine = ImapSessionLogin::new(
+                        context,
+                        ImapSessionLoginParams::new(auth.username, auth.password)?,
+                    );
+
+                    context = loop {
+                        match coroutine.resume(arg.take()) {
+                            ImapSessionLoginResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
+                            }
+                            ImapSessionLoginResult::Ok { context } => break context,
+                            ImapSessionLoginResult::Err { err, .. } => bail!(err),
                         }
+                    };
+                }
+                Some(SaslMechanism::Plain) => {
+                    let Some(auth) = sasl.plain.take() else {
+                        bail!("missing SASL PLAIN configuration");
+                    };
 
-                        let login = Capability::Auth(AuthMechanism::Login);
-                        if !context.capability.contains(&login) {
-                            debug!("SASL LOGIN disabled by the server, skipping it");
-                            continue;
+                    let mut arg = None;
+                    let mut coroutine = ImapSessionAuthenticatePlain::new(
+                        context,
+                        ImapSessionAuthenticatePlainParams::new(
+                            auth.authzid,
+                            auth.authcid,
+                            auth.passwd,
+                            ir,
+                        ),
+                    );
+
+                    context = loop {
+                        match coroutine.resume(arg.take()) {
+                            ImapSessionAuthenticatePlainResult::Io { input } => {
+                                arg = Some(handle(&mut stream, input)?)
+                            }
+                            ImapSessionAuthenticatePlainResult::Ok { context } => break context,
+                            ImapSessionAuthenticatePlainResult::Err { err, .. } => bail!(err),
                         }
-
-                        candidates.push(ImapAuthenticateCandidate::Login(ImapLoginParams::new(
-                            auth.username,
-                            auth.password,
-                        )?));
-                    }
-                    SaslMechanism::Plain => {
-                        let Some(auth) = sasl.plain.take() else {
-                            debug!("missing SASL PLAIN configuration, skipping it");
-                            continue;
-                        };
-
-                        let plain = Capability::Auth(AuthMechanism::Plain);
-                        if !context.capability.contains(&plain) {
-                            debug!("SASL PLAIN disabled by the server, skipping it");
-                            continue;
-                        }
-
-                        candidates.push(ImapAuthenticateCandidate::Plain(
-                            ImapAuthenticatePlainParams::new(
-                                auth.authzid,
-                                auth.authcid,
-                                auth.passwd,
-                                ir,
-                            ),
-                        ));
-                    }
-                    SaslMechanism::Anonymous => {
-                        // TODO: check if capability available
-
-                        let message = sasl
-                            .anonymous
-                            .take()
-                            .and_then(|auth| auth.message)
-                            .unwrap_or_default();
-
-                        candidates.push(ImapAuthenticateCandidate::Anonymous(
-                            ImapAuthenticateAnonymousParams::new(message, ir),
-                        ));
-                    }
-                };
-            }
-
-            let mut arg = None;
-            let mut coroutine = ImapAuthenticate::new(context, candidates);
-
-            loop {
-                match coroutine.resume(arg.take()) {
-                    ImapAuthenticateResult::Io { io } => arg = Some(handle(&mut stream, io)?),
-                    ImapAuthenticateResult::Ok { context: c, .. } => break context = c,
-                    ImapAuthenticateResult::Err { err, .. } => bail!(err),
+                    };
+                }
+                Some(SaslMechanism::Anonymous) => {
+                    unimplemented!("ANONYMOUS SASL mechanism not yet implemented")
                 }
             }
         }

@@ -1,8 +1,8 @@
 use secrecy::SecretString;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Sasl {
-    pub mechanisms: Vec<SaslMechanism>,
+    pub mechanism: Option<SaslMechanism>,
     pub login: Option<SaslLogin>,
     pub plain: Option<SaslPlain>,
     pub anonymous: Option<SaslAnonymous>,
@@ -13,10 +13,6 @@ pub enum SaslMechanism {
     Login,
     Plain,
     Anonymous,
-}
-
-pub fn sasl_default_mechanisms() -> Vec<SaslMechanism> {
-    vec![SaslMechanism::Plain, SaslMechanism::Login]
 }
 
 #[derive(Clone, Debug)]

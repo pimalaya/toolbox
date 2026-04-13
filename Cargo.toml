@@ -24,21 +24,24 @@ config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "d
 secret = ["dep:secrecy", "dep:io-process", "dep:serde", "dep:thiserror"]
 sasl = ["dep:secrecy"]
 stream = ["dep:uds_windows"]
-imap = ["dep:io-imap", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
-jmap = ["dep:base64", "dep:io-jmap", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
-smtp = ["dep:gethostname", "dep:io-smtp", "dep:io-stream", "dep:url", "stream", "sasl", "secret"]
+imap = ["dep:io-imap", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
+jmap = ["dep:base64", "dep:io-jmap", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
+smtp = ["dep:gethostname", "dep:io-smtp", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
 rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
 
 vendored = ["native-tls?/vendored"]
 
+[target.'cfg(windows)'.dependencies]
+uds_windows = { version = "1", optional = true }
+
 [dependencies]
 anyhow = "1"
 base64 = { version = "0.22", optional = true }
 clap = { version = "4.4", default-features = false, features = ["std", "derive"], optional = true }
 clap_complete = { version = "4.4", optional = true }
-clap_mangen = { version = "0.2", optional = true }
+clap_mangen = { version = "0.3", optional = true }
 dirs = { version = "6.0", optional = true }
 env_logger = { version = "0.11", optional = true }
 gethostname = { version = "1", optional = true }
@@ -49,11 +52,11 @@ io-imap = { version = "0.0.1", default-features = false, optional = true }
 io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-process = { version = "0.0.2", default-features = false, features = ["expand", "serde", "std"], optional = true }
 io-smtp = { version = "0.0.1", default-features = false, optional = true }
-io-stream = { version = "0.0.2", default-features = false, features = ["std"], optional = true }
+io-socket = { version = "0.0.1", default-features = false, features = ["std-stream"], optional = true }
 log = "0.4"
 native-tls = { version = "0.2", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"], optional = true }
-rustls-platform-verifier = { version = "0.6", optional = true }
+rustls-platform-verifier = { version = "0.7", optional = true }
 secrecy = { version = "0.10", features = ["serde"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde-toml-merge = { version = "=0.3.9", optional = true }
@@ -64,11 +67,16 @@ toml = { version = "0.8", optional = true }
 toml_edit = { version = "0.24", optional = true }
 url = { version = "2.2", optional = true }
 
-[target.'cfg(windows)'.dependencies]
-uds_windows = { version = "1", optional = true }
+# [patch.crates-io]
+# io-http.path = "../io-http"
+# io-imap.path = "../io-imap"
+# io-jmap.path = "../io-jmap"
+# io-smtp.path = "../io-smtp"
+# io-socket.path = "../io-socket"
 
 [patch.crates-io]
+io-http.git = "https://github.com/pimalaya/io-http"
 io-imap = { git = "https://github.com/pimalaya/io-imap", branch = "io" }
 io-jmap.git = "https://github.com/pimalaya/io-jmap"
-io-http.git = "https://github.com/pimalaya/io-http"
 io-smtp.git = "https://github.com/pimalaya/io-smtp"
+io-socket.git = "https://github.com/pimalaya/io-socket"
