@@ -24,10 +24,10 @@ config = ["dep:dirs", "dep:serde", "dep:serde-toml-merge", "dep:shellexpand", "d
 secret = ["dep:secrecy", "dep:io-process", "dep:serde", "dep:thiserror"]
 sasl = ["dep:secrecy"]
 stream = ["dep:uds_windows"]
-imap = ["dep:io-imap", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
-http = ["dep:io-socket", "dep:url", "stream"]
-jmap = ["dep:base64", "dep:io-jmap", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
-smtp = ["dep:gethostname", "dep:io-smtp", "dep:io-socket", "dep:url", "stream", "sasl", "secret"]
+imap = ["dep:io-imap", "dep:url", "stream", "sasl", "secret"]
+http = ["dep:url", "stream"]
+jmap = ["dep:base64", "dep:io-jmap", "dep:url", "stream", "sasl", "secret"]
+smtp = ["dep:gethostname", "dep:io-smtp", "dep:url", "stream", "sasl", "secret"]
 native-tls = ["dep:native-tls"]
 rustls-aws = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/aws-lc-rs"]
 rustls-ring = ["dep:rustls", "dep:rustls-platform-verifier", "rustls/ring"]
@@ -52,7 +52,6 @@ io-imap = { version = "0.0.1", default-features = false, optional = true }
 io-jmap = { version = "0.0.1", default-features = false, optional = true }
 io-process = { version = "0.0.2", default-features = false, features = ["expand", "serde", "std"], optional = true }
 io-smtp = { version = "0.0.1", default-features = false, optional = true }
-io-socket = { version = "0.0.1", default-features = false, features = ["std-stream"], optional = true }
 log = "0.4"
 native-tls = { version = "0.2", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12"], optional = true }

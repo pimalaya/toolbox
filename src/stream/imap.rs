@@ -1,15 +1,28 @@
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::{net::TcpStream, sync::Arc};
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    sync::Arc,
+};
 
 use anyhow::{bail, Result};
 use io_imap::{
     context::ImapContext,
-    rfc3501::{capability::*, greeting_with_capability::*, login::*, starttls::*},
-    sasl::authenticate_plain::*,
+    rfc3501::{
+        capability::{ImapCapabilityGet, ImapCapabilityGetResult},
+        greeting_with_capability::{
+            ImapGreetingWithCapabilityGet, ImapGreetingWithCapabilityGetResult,
+        },
+        login::{ImapSessionLogin, ImapSessionLoginParams, ImapSessionLoginResult},
+        starttls::{ImapStartTls, ImapStartTlsResult},
+    },
+    sasl::authenticate_plain::{
+        ImapSessionAuthenticatePlain, ImapSessionAuthenticatePlainParams,
+        ImapSessionAuthenticatePlainResult,
+    },
     types::response::Capability,
 };
-use io_socket::runtimes::std_stream::handle;
 use log::info;
 #[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
@@ -24,139 +37,147 @@ use crate::{
     stream::{Stream, Tls, TlsProvider},
 };
 
+const READ_BUFFER_SIZE: usize = 16 * 1024;
+
 #[derive(Debug)]
 pub struct ImapSession {
     pub context: ImapContext,
     pub stream: Stream,
 }
 
+fn upgrade_tls(host: &str, tcp: TcpStream, tls: &Tls) -> Result<Stream> {
+    match tls.provider()? {
+        #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
+        TlsProvider::Rustls => {
+            let mut config = tls.build_rustls_client_config()?;
+            config.alpn_protocols = vec![b"imap".to_vec()];
+            let server_name = host.to_string().try_into()?;
+            let conn = ClientConnection::new(Arc::new(config), server_name)?;
+            Ok(Stream::Rustls(StreamOwned::new(conn, tcp)))
+        }
+        #[cfg(feature = "native-tls")]
+        TlsProvider::NativeTls => {
+            let mut builder = TlsConnector::builder();
+
+            if let Some(pem_path) = &tls.cert {
+                let pem = std::fs::read(pem_path)?;
+                let cert = native_tls::Certificate::from_pem(&pem)?;
+                builder.add_root_certificate(cert);
+            }
+
+            let connector = builder.build()?;
+            Ok(Stream::NativeTls(connector.connect(host, tcp)?))
+        }
+        #[allow(unreachable_patterns)]
+        _ => unreachable!(),
+    }
+}
+
+fn drive_greeting_with_capability<S: Read + Write>(
+    stream: &mut S,
+    context: ImapContext,
+) -> Result<ImapContext> {
+    let mut buf = [0u8; READ_BUFFER_SIZE];
+    let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
+    let mut arg: Option<&[u8]> = None;
+
+    loop {
+        match coroutine.resume(arg.take()) {
+            ImapGreetingWithCapabilityGetResult::Ok(context) => return Ok(context),
+            ImapGreetingWithCapabilityGetResult::WantsRead => {
+                let n = stream.read(&mut buf)?;
+                arg = Some(&buf[..n]);
+            }
+            ImapGreetingWithCapabilityGetResult::WantsWrite(bytes) => {
+                stream.write_all(&bytes)?;
+                arg = None;
+            }
+            ImapGreetingWithCapabilityGetResult::Err { err, .. } => bail!(err),
+        }
+    }
+}
+
+fn drive_capability<S: Read + Write>(stream: &mut S, context: ImapContext) -> Result<ImapContext> {
+    let mut buf = [0u8; READ_BUFFER_SIZE];
+    let mut coroutine = ImapCapabilityGet::new(context);
+    let mut arg: Option<&[u8]> = None;
+
+    loop {
+        match coroutine.resume(arg.take()) {
+            ImapCapabilityGetResult::Ok(context) => return Ok(context),
+            ImapCapabilityGetResult::WantsRead => {
+                let n = stream.read(&mut buf)?;
+                arg = Some(&buf[..n]);
+            }
+            ImapCapabilityGetResult::WantsWrite(bytes) => {
+                stream.write_all(&bytes)?;
+                arg = None;
+            }
+            ImapCapabilityGetResult::Err { err, .. } => bail!(err),
+        }
+    }
+}
+
+fn drive_starttls<S: Read + Write>(stream: &mut S, context: ImapContext) -> Result<ImapContext> {
+    let mut buf = [0u8; READ_BUFFER_SIZE];
+    let mut coroutine = ImapStartTls::new(context);
+    let mut arg: Option<&[u8]> = None;
+
+    loop {
+        match coroutine.resume(arg.take()) {
+            ImapStartTlsResult::WantsStartTls { context, .. } => return Ok(context),
+            ImapStartTlsResult::WantsRead => {
+                let n = stream.read(&mut buf)?;
+                arg = Some(&buf[..n]);
+            }
+            ImapStartTlsResult::WantsWrite(bytes) => {
+                stream.write_all(&bytes)?;
+                arg = None;
+            }
+            ImapStartTlsResult::Err { err, .. } => bail!(err),
+        }
+    }
+}
+
 impl ImapSession {
     pub fn new(url: Url, tls: Tls, starttls: bool, mut sasl: Sasl) -> Result<Self> {
         info!("connecting to IMAP server using {url}");
 
-        let mut context = ImapContext::new();
+        let context = ImapContext::new();
         let host = url.host_str().unwrap_or("127.0.0.1");
 
         let (mut context, mut stream) = match url.scheme() {
             scheme if scheme.eq_ignore_ascii_case("imap") => {
                 let port = url.port().unwrap_or(143);
-                let mut stream = TcpStream::connect((host, port))?;
-
-                let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
-                let mut arg = None;
-
-                loop {
-                    match coroutine.resume(arg.take()) {
-                        ImapGreetingWithCapabilityGetResult::Io { input } => {
-                            arg = Some(handle(&mut stream, input)?)
-                        }
-                        ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
-                            break context = c
-                        }
-                        ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
-                    }
-                }
-
-                (context, Stream::Tcp(stream))
+                let mut tcp = TcpStream::connect((host, port))?;
+                let context = drive_greeting_with_capability(&mut tcp, context)?;
+                (context, Stream::Tcp(tcp))
             }
             scheme if scheme.eq_ignore_ascii_case("imaps") => {
                 let port = url.port().unwrap_or(993);
-                let mut stream = TcpStream::connect((host, port))?;
+                let mut tcp = TcpStream::connect((host, port))?;
 
-                if starttls {
-                    let mut coroutine = ImapStartTls::new(context);
-                    let mut arg = None;
-
-                    loop {
-                        match coroutine.resume(arg.take()) {
-                            ImapStartTlsResult::Io { input } => {
-                                arg = Some(handle(&mut stream, input)?)
-                            }
-                            ImapStartTlsResult::Ok { context: c } => break context = c,
-                            ImapStartTlsResult::Err { err, .. } => Err(err)?,
-                        }
-                    }
-                }
-
-                let mut stream = match tls.provider()? {
-                    #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
-                    TlsProvider::Rustls => {
-                        let mut config = tls.build_rustls_client_config()?;
-                        config.alpn_protocols = vec![b"imap".to_vec()];
-                        let server_name = host.to_string().try_into()?;
-                        let conn = ClientConnection::new(Arc::new(config), server_name)?;
-                        Stream::Rustls(StreamOwned::new(conn, stream))
-                    }
-                    #[cfg(feature = "native-tls")]
-                    TlsProvider::NativeTls => {
-                        let mut builder = TlsConnector::builder();
-
-                        if let Some(pem_path) = &tls.cert {
-                            debug!("using TLS cert at {}", pem_path.display());
-                            let pem = std::fs::read(pem_path)?;
-                            let cert = native_tls::Certificate::from_pem(&pem)?;
-                            builder.add_root_certificate(cert);
-                        }
-
-                        let connector = builder.build()?;
-                        Stream::NativeTls(connector.connect(host, stream)?)
-                    }
-                    #[allow(unreachable_patterns)]
-                    _ => unreachable!(),
+                let context = if starttls {
+                    drive_starttls(&mut tcp, context)?
+                } else {
+                    context
                 };
 
-                if starttls {
-                    let mut coroutine = ImapCapabilityGet::new(context);
-                    let mut arg = None;
+                let mut stream = upgrade_tls(host, tcp, &tls)?;
 
-                    loop {
-                        match coroutine.resume(arg.take()) {
-                            ImapCapabilityGetResult::Io { input } => {
-                                arg = Some(handle(&mut stream, input)?)
-                            }
-                            ImapCapabilityGetResult::Ok { context: c } => break context = c,
-                            ImapCapabilityGetResult::Err { err, .. } => Err(err)?,
-                        }
-                    }
+                let context = if starttls {
+                    drive_capability(&mut stream, context)?
                 } else {
-                    let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
-                    let mut arg = None;
-
-                    loop {
-                        match coroutine.resume(arg.take()) {
-                            ImapGreetingWithCapabilityGetResult::Io { input } => {
-                                arg = Some(handle(&mut stream, input)?)
-                            }
-                            ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
-                                break context = c
-                            }
-                            ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
-                        }
-                    }
-                }
+                    drive_greeting_with_capability(&mut stream, context)?
+                };
 
                 (context, stream)
             }
             scheme if scheme.eq_ignore_ascii_case("unix") => {
                 let sock_path = url.path();
-                let mut stream = UnixStream::connect(&sock_path)?;
-
-                let mut coroutine = ImapGreetingWithCapabilityGet::new(context);
-                let mut arg = None;
-
-                loop {
-                    match coroutine.resume(arg.take()) {
-                        ImapGreetingWithCapabilityGetResult::Io { input } => {
-                            arg = Some(handle(&mut stream, input)?)
-                        }
-                        ImapGreetingWithCapabilityGetResult::Ok { context: c } => {
-                            break context = c
-                        }
-                        ImapGreetingWithCapabilityGetResult::Err { err, .. } => Err(err)?,
-                    }
-                }
-
-                (context, Stream::Unix(stream))
+                let mut unix = UnixStream::connect(sock_path)?;
+                let context = drive_greeting_with_capability(&mut unix, context)?;
+                (context, Stream::Unix(unix))
             }
             scheme => {
                 bail!("Unknown scheme {scheme}, expected imap, imaps or unix");
@@ -178,18 +199,24 @@ impl ImapSession {
                         bail!("missing SASL LOGIN configuration");
                     };
 
-                    let mut arg = None;
+                    let mut buf = [0u8; READ_BUFFER_SIZE];
                     let mut coroutine = ImapSessionLogin::new(
                         context,
                         ImapSessionLoginParams::new(auth.username, auth.password)?,
                     );
+                    let mut arg: Option<&[u8]> = None;
 
                     context = loop {
                         match coroutine.resume(arg.take()) {
-                            ImapSessionLoginResult::Io { input } => {
-                                arg = Some(handle(&mut stream, input)?)
+                            ImapSessionLoginResult::Ok(c) => break c,
+                            ImapSessionLoginResult::WantsRead => {
+                                let n = stream.read(&mut buf)?;
+                                arg = Some(&buf[..n]);
                             }
-                            ImapSessionLoginResult::Ok { context } => break context,
+                            ImapSessionLoginResult::WantsWrite(bytes) => {
+                                stream.write_all(&bytes)?;
+                                arg = None;
+                            }
                             ImapSessionLoginResult::Err { err, .. } => bail!(err),
                         }
                     };
@@ -199,7 +226,7 @@ impl ImapSession {
                         bail!("missing SASL PLAIN configuration");
                     };
 
-                    let mut arg = None;
+                    let mut buf = [0u8; READ_BUFFER_SIZE];
                     let mut coroutine = ImapSessionAuthenticatePlain::new(
                         context,
                         ImapSessionAuthenticatePlainParams::new(
@@ -209,13 +236,19 @@ impl ImapSession {
                             ir,
                         ),
                     );
+                    let mut arg: Option<&[u8]> = None;
 
                     context = loop {
                         match coroutine.resume(arg.take()) {
-                            ImapSessionAuthenticatePlainResult::Io { input } => {
-                                arg = Some(handle(&mut stream, input)?)
+                            ImapSessionAuthenticatePlainResult::Ok(c) => break c,
+                            ImapSessionAuthenticatePlainResult::WantsRead => {
+                                let n = stream.read(&mut buf)?;
+                                arg = Some(&buf[..n]);
                             }
-                            ImapSessionAuthenticatePlainResult::Ok { context } => break context,
+                            ImapSessionAuthenticatePlainResult::WantsWrite(bytes) => {
+                                stream.write_all(&bytes)?;
+                                arg = None;
+                            }
                             ImapSessionAuthenticatePlainResult::Err { err, .. } => bail!(err),
                         }
                     };

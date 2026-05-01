@@ -1,12 +1,15 @@
-use std::{net::TcpStream, sync::Arc};
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+    sync::Arc,
+};
 
 use anyhow::{bail, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use io_jmap::rfc8620::{
-    coroutines::session_get::{JmapSessionGet, JmapSessionGetResult},
-    types::session::JmapSession as IoJmapSession,
+    session::JmapSession as IoJmapSession,
+    session_get::{JmapSessionGet, JmapSessionGetResult},
 };
-use io_stream::runtimes::std::handle;
 use log::info;
 #[cfg(feature = "native-tls")]
 use native_tls::TlsConnector;
@@ -16,6 +19,8 @@ use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
 use crate::stream::{Stream, Tls, TlsProvider};
+
+const READ_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Authentication for a JMAP session.
 // https://www.iana.org/assignments/http-authschemes/http-authschemes.xhtml#authschemes
@@ -62,7 +67,7 @@ pub struct JmapSession {
     pub http_auth: SecretString,
 }
 
-fn new_stream(host: impl ToString, tcp: TcpStream, tls: &Tls) -> Result<Stream> {
+fn new_tls_stream(host: &str, tcp: TcpStream, tls: &Tls) -> Result<Stream> {
     let stream = match tls.provider()? {
         #[cfg(any(feature = "rustls-aws", feature = "rustls-ring"))]
         TlsProvider::Rustls => {
@@ -76,7 +81,6 @@ fn new_stream(host: impl ToString, tcp: TcpStream, tls: &Tls) -> Result<Stream> 
             let mut builder = TlsConnector::builder();
 
             if let Some(pem_path) = &tls.cert {
-                debug!("using TLS cert at {}", pem_path.display());
                 let pem = std::fs::read(pem_path)?;
                 let cert = native_tls::Certificate::from_pem(&pem)?;
                 builder.add_root_certificate(cert);
@@ -92,10 +96,34 @@ fn new_stream(host: impl ToString, tcp: TcpStream, tls: &Tls) -> Result<Stream> 
     Ok(stream)
 }
 
+fn use_tls(scheme: &str) -> bool {
+    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("jmaps")
+}
+
+fn default_port(scheme: &str) -> u16 {
+    if use_tls(scheme) {
+        443
+    } else {
+        80
+    }
+}
+
+fn connect(url: &Url, tls: &Tls) -> Result<Stream> {
+    let host = url.host_str().unwrap_or("localhost");
+    let port = url.port().unwrap_or_else(|| default_port(url.scheme()));
+    let tcp = TcpStream::connect((host, port))?;
+
+    if use_tls(url.scheme()) {
+        new_tls_stream(host, tcp, tls)
+    } else {
+        Ok(Stream::Tcp(tcp))
+    }
+}
+
 impl JmapSession {
     /// Returns a new TLS stream to `url` if its authority differs from the
     /// current JMAP API URL, or `None` if the existing stream can be reused.
-    pub fn connect_if_different(&self, url: &url::Url, tls: &Tls) -> Result<Option<Stream>> {
+    pub fn connect_if_different(&self, url: &Url, tls: &Tls) -> Result<Option<Stream>> {
         let api_url = &self.session.api_url;
 
         let same_host = api_url.host() == url.host();
@@ -107,8 +135,8 @@ impl JmapSession {
 
         let host = url.host_str().unwrap_or("localhost");
         let port = url.port_or_known_default().unwrap_or(443);
-        let tcp = std::net::TcpStream::connect((host, port))?;
-        Ok(Some(new_stream(host, tcp, tls)?))
+        let tcp = TcpStream::connect((host, port))?;
+        Ok(Some(new_tls_stream(host, tcp, tls)?))
     }
 
     /// Establishes a JMAP session.
@@ -123,7 +151,6 @@ impl JmapSession {
         let url = match Url::parse(&server) {
             Ok(url) => url,
             Err(url::ParseError::RelativeUrlWithoutBase) => {
-                // Bare authority — prepend https:// for discovery.
                 Url::parse(&format!("https://{server}"))?
             }
             Err(e) => return Err(e.into()),
@@ -131,40 +158,36 @@ impl JmapSession {
 
         info!("connecting to JMAP server {url}");
 
-        let host = url.host_str().unwrap_or("localhost");
-
-        let (port, use_tls) = match url.scheme() {
-            s if s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("jmaps") => {
-                (url.port().unwrap_or(443), true)
-            }
-            s if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("jmap") => {
-                (url.port().unwrap_or(80), false)
-            }
+        match url.scheme() {
+            s if s.eq_ignore_ascii_case("https") || s.eq_ignore_ascii_case("jmaps") => {}
+            s if s.eq_ignore_ascii_case("http") || s.eq_ignore_ascii_case("jmap") => {}
             scheme => bail!("unsupported JMAP scheme `{scheme}`, expected http/https/jmap/jmaps"),
-        };
+        }
 
-        let tcp = TcpStream::connect((host, port))?;
-        let mut stream = if use_tls {
-            new_stream(host, tcp, &tls)?
-        } else {
-            Stream::Tcp(tcp)
-        };
+        let mut stream = connect(&url, &tls)?;
 
         let http_auth: SecretString = auth.into();
-        let mut coroutine = JmapSessionGet::new(&http_auth, &url)?;
-        let mut arg = None;
+        let mut coroutine = JmapSessionGet::new(&http_auth, &url);
+        let mut buf = [0u8; READ_BUFFER_SIZE];
+        let mut arg: Option<&[u8]> = None;
 
         let session = loop {
             match coroutine.resume(arg.take()) {
-                JmapSessionGetResult::Io { io } => arg = Some(handle(&mut stream, io)?),
                 JmapSessionGetResult::Ok { session, .. } => break session,
-                JmapSessionGetResult::Reset(uri) => {
-                    let host = uri.host().unwrap_or(host);
-                    let port = uri.port_u16().unwrap_or(443);
-                    let tcp = TcpStream::connect((host, port))?;
-                    stream = new_stream(host, tcp, &tls)?;
+                JmapSessionGetResult::WantsRead => {
+                    let n = stream.read(&mut buf)?;
+                    arg = Some(&buf[..n]);
                 }
-                JmapSessionGetResult::Err { err } => return Err(err.into()),
+                JmapSessionGetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes)?;
+                    arg = None;
+                }
+                JmapSessionGetResult::WantsRedirect { url: new_url, .. } => {
+                    stream = connect(&new_url, &tls)?;
+                    coroutine = JmapSessionGet::new(&http_auth, &new_url);
+                    arg = None;
+                }
+                JmapSessionGetResult::Err(err) => return Err(err.into()),
             }
         };
 
