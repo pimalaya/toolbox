@@ -16,7 +16,7 @@ pub struct HttpSession {
 }
 
 impl HttpSession {
-    pub fn new(url: Url, tls: Tls) -> Result<Self> {
+    pub fn new(url: &Url, tls: Tls) -> Result<Self> {
         info!("connecting to HTTP server using {url}");
 
         let host = url.host_str().unwrap_or("127.0.0.1");
